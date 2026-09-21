@@ -1,0 +1,77 @@
+[
+    {
+        "category": "Історичний факультет",
+        "title": "Інформація",
+        "url": "https://knu.ua/ua/#geninf"
+    },
+    {
+        "category": "Історичний факультет",
+        "title": "Підрозділи університету",
+        "url": "https://knu.ua/ua/#dep"
+    },
+    {
+        "category": "Історичний факультет",
+        "title": "Абітурієнтам",
+        "url": "https://knu.ua/ua/#abit"
+    },
+    {
+        "category": "Історичний факультет",
+        "title": "Студентам",
+        "url": "https://knu.ua/ua/#stud"
+    },
+    {
+        "category": "Історичний факультет",
+        "title": "Ресурси",
+        "url": "https://knu.ua/ua/#resources"
+    },
+    {
+        "category": "Економічний факультет",
+        "title": "Новини",
+        "url": "https://knu.ua/ua/#news"
+    },
+    {
+        "category": "Економічний факультет",
+        "title": "гуртожитку № 10",
+        "url": "http://studmisto.knu.ua/dormitory-10"
+    },
+    {
+        "category": "Економічний факультет",
+        "title": "гуртожитку № 12",
+        "url": "http://studmisto.knu.ua/dormitory-12"
+    },
+    {
+        "category": "Економічний факультет",
+        "title": "Адміністрація факультету",
+        "url": "https://knu.ua/ua/departments/economics/admin/"
+    },
+    {
+        "category": "Економічний факультет",
+        "title": "econom@knu.ua",
+        "url": "mailto:econom@knu.ua"
+    },
+    {
+        "category": "Географічний факультет",
+        "title": "Кафедра географії України",
+        "url": "https://geo.knu.ua/fakultet/pidrozdily/kafedry/kafedra-geografiyi-ukrayiny/"
+    },
+    {
+        "category": "Географічний факультет",
+        "title": "Кафедра геодезії, картографії та землеустрою",
+        "url": "https://geo.knu.ua/fakultet/pidrozdily/kafedry/kafedra-geodeziyi-ta-kartografiyi/"
+    },
+    {
+        "category": "Географічний факультет",
+        "title": "Кафедра гідрології та гідроекології",
+        "url": "https://geo.knu.ua/fakultet/pidrozdily/kafedry/kafedra-gidrologiyi-ta-gidroekologiyi/"
+    },
+    {
+        "category": "Географічний факультет",
+        "title": "Кафедра економічної та соціальної географії",
+        "url": "https://geo.knu.ua/fakultet/pidrozdily/kafedry/kafedra-ekonomichnoyi-ta-soczialnoyi-geografiyi/"
+    },
+    {
+        "category": "Географічний факультет",
+        "title": "Кафедра землезнавства та геоморфології",
+        "url": "https://geo.knu.ua/fakultet/pidrozdily/kafedry/kafedra-zemleznavstva-ta-geomorfologiyi/"
+    }
+]

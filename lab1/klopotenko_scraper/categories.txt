@@ -1,0 +1,39 @@
+Географічний факультет: https://knu.ua/ua/departments/geography/
+Економічний факультет: https://knu.ua/ua/departments/economics/
+Історичний факультет: https://knu.ua/ua/departments/history/
+Механіко-математичний факультет: https://knu.ua/ua/departments/mm/
+Факультет інформаційних технологій: https://knu.ua/ua/departments/it/
+Факультет комп'ютерних наук та кібернетики: https://knu.ua/ua/departments/csc/
+Факультет психології: https://knu.ua/ua/departments/psychology/
+Факультет радіофізики, електроніки та комп’ютерних систем: https://knu.ua/ua/departments/recs/
+Факультет соціології: https://knu.ua/ua/departments/sociology/
+Фізичний факультет: https://knu.ua/ua/departments/physics/
+Філософський факультет: https://knu.ua/ua/departments/philosophy/
+Хімічний факультет: https://knu.ua/ua/departments/chemistry/
+Військовий інститут: https://knu.ua/ua/departments/military/
+Інститут післядипломної освіти: https://knu.ua/ua/departments/ce/
+Iнститут Управлiння державної охорони України: https://knu.ua/ua/departments/msgu/
+Навчально-науковий інститут високих технологій: https://knu.ua/ua/departments/ht/
+Навчально-науковий інститут "Інститут геології": https://knu.ua/ua/departments/geology/
+Навчально-науковий інститут журналістики: https://knu.ua/ua/departments/journalism/
+Навчально-науковий інститут  міжнародних відносин: https://knu.ua/ua/departments/ir/
+Навчально-науковий інститут права: https://knu.ua/ua/departments/law/
+Навчально-науковий інститут філології: https://knu.ua/ua/departments/philology/
+Навчально-науковий інститут публічного управління та державної служби: https://knu.ua/ua/departments/ipacs/
+Навчально-науковий центр "Інститут біології та медицини": https://knu.ua/ua/departments/bm/
+ВСП "Фаховий коледж геологорозвідувальних технологій": https://knu.ua/ua/departments/gpt/
+ВСП "Оптико-механічний фаховий коледж": https://knu.ua/ua/departments/om/
+Український фiзико-математичний лiцей: https://knu.ua/ua/departments/upml/
+Підготовче відділення для громадян України: https://knu.ua/ua/departments/pd/
+Підготовче відділення для іноземних громадян: https://knu.ua/ua/departments/pdff/
+Центр ветеранського розвитку: https://knu.ua/ua/departments/cvd/
+Центр із забезпечення закупівельної діяльності: https://knu.ua/ua/departments/pc/
+Центр iноземних мов: https://knu.ua/ua/departments/ucfl/
+Центр комунікацій: https://knu.ua/ua/departments/dc/
+Бухгалтерія: http://knu.ua/ua/departments/accounting
+Відділ забезпечення реалізації платних послуг: http://knu.ua/ua/departments/eips
+Відділ забезпечення якості освіти: http://knu.ua/ua/departments/eqad
+Інститут психіатрії: http://knu.ua/ua/departments/psychiatry
+Планово-фінансовий відділ: http://knu.ua/ua/departments/dfp/
+Психологічна служба університету: http://knu.ua/ua/departments/ps/
+Університетська клініка: http://knu.ua/ua/departments/uc

@@ -1,0 +1,15 @@
+[Історичний факультет] Інформація - https://knu.ua/ua/#geninf
+[Історичний факультет] Підрозділи університету - https://knu.ua/ua/#dep
+[Історичний факультет] Абітурієнтам - https://knu.ua/ua/#abit
+[Історичний факультет] Студентам - https://knu.ua/ua/#stud
+[Історичний факультет] Ресурси - https://knu.ua/ua/#resources
+[Економічний факультет] Новини - https://knu.ua/ua/#news
+[Економічний факультет] гуртожитку № 10 - http://studmisto.knu.ua/dormitory-10
+[Економічний факультет] гуртожитку № 12 - http://studmisto.knu.ua/dormitory-12
+[Економічний факультет] Адміністрація факультету - https://knu.ua/ua/departments/economics/admin/
+[Економічний факультет] econom@knu.ua - mailto:econom@knu.ua
+[Географічний факультет] Кафедра географії України - https://geo.knu.ua/fakultet/pidrozdily/kafedry/kafedra-geografiyi-ukrayiny/
+[Географічний факультет] Кафедра геодезії, картографії та землеустрою - https://geo.knu.ua/fakultet/pidrozdily/kafedry/kafedra-geodeziyi-ta-kartografiyi/
+[Географічний факультет] Кафедра гідрології та гідроекології - https://geo.knu.ua/fakultet/pidrozdily/kafedry/kafedra-gidrologiyi-ta-gidroekologiyi/
+[Географічний факультет] Кафедра економічної та соціальної географії - https://geo.knu.ua/fakultet/pidrozdily/kafedry/kafedra-ekonomichnoyi-ta-soczialnoyi-geografiyi/
+[Географічний факультет] Кафедра землезнавства та геоморфології - https://geo.knu.ua/fakultet/pidrozdily/kafedry/kafedra-zemleznavstva-ta-geomorfologiyi/
