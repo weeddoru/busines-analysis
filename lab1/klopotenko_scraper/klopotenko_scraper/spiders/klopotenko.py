@@ -28,13 +28,12 @@ class KnuSpider(scrapy.Spider):
         self.img_count = 0
 
         self.cat_txt = open('categories.txt', 'w', encoding='utf-8')
-        self.rec_txt = open('recipes.txt', 'w', encoding='utf-8')
+        self.rec_txt = open('subcategories.txt', 'w', encoding='utf-8')
         self.img_txt = open('images_list.txt', 'w', encoding='utf-8')
 
     def parse(self, response):
         # 2. Переконатись у статичності та вивести HTML у консоль
         print("\n" + "=" * 50)
-        print("=== Завдання 2: HTML-код сторінки https://knu.ua/ua/departments ===")
         print(response.text[:300])
         print("=" * 50 + "\n")
 
@@ -127,7 +126,7 @@ class KnuSpider(scrapy.Spider):
         tree.write("categories.xml", encoding="utf-8", xml_declaration=True)
 
         # 4. Зберегти результати скрапінгу елементів у JSON
-        with open('recipes.json', 'w', encoding='utf-8') as f:
+        with open('subcategories.json', 'w', encoding='utf-8') as f:
             json.dump(self.items_data, f, ensure_ascii=False, indent=4)
 
         # 5. Зберегти список зображень у CSV
@@ -157,4 +156,4 @@ class KnuSpider(scrapy.Spider):
 
         conn.commit()
         conn.close()
-        print("\n Усі завдання (2-6) успішно виконані!")
+        
