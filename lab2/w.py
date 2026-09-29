@@ -29,6 +29,4 @@ with sync_playwright() as p:
 
     browser.close()
 
-print("Збір даних завершено.")
-print("Дані збережено у файлі kubrick_data.json")
 
