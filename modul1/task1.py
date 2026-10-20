@@ -1,235 +1,141 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Автоматизований збір пропозицій продажу смартфонів з EK.ua (E-Katalog).
-
-Категорія "Мобильные телефоны": https://ek.ua/list/122/
-Сторінки категорії: /list/122/ (1), /list/122/1/ (2), ... /list/122/4/ (5)
-
-Результат у 1НФ: один рядок = одна пропозиція магазину.
-Поля CSV: model, description, city, shop, price
-  price - число (int або float) без позначення валюти.
-
-Запуск:
-    pip install requests beautifulsoup4 playwright
-    python -m playwright install chromium     # лише для режиму --browser
-    python ek_smartphones_scraper.py                 # 5 сторінок, ek_smartphones.csv
-    python ek_smartphones_scraper.py                       # 5 сторінок категорії; до 5 пропозицій на модель
-    python ek_smartphones_scraper.py --max-offers 1        # лише перша пропозиція кожної моделі
-    python ek_smartphones_scraper.py --listing             # лише категорія (діапазон цін, без міста/магазину)
-    python ek_smartphones_scraper.py --offers              # усі пропозиції кожної моделі
-    python ek_smartphones_scraper.py --max-models 3        # швидкий тест
-    python ek_smartphones_scraper.py --category-url https://ek.ua/ua/list/122/apple/ https://ek.ua/ua/list/122/samsung/
-    python ek_smartphones_scraper.py --model APPLE-IPHONE-18-PRO-MAX-256GB --max-offers 0   # одна модель, усі пропозиції
-    python ek_smartphones_scraper.py --debug-dir debug   # зберігати HTML для діагностики
-"""
 import argparse
 import csv
 import logging
 import re
 import sys
-import time
-from pathlib import Path
-from urllib.parse import urljoin
+from playwright.sync_api import sync_playwright
 
-import requests
-from bs4 import BeautifulSoup
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-
-BASE = "https://ek.ua/ua"   # українська версія сайту
+BASE = "https://ek.ua/ua"
 CATEGORY = "/list/122/"
 FIELDS = ["model", "description", "city", "shop", "price"]
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    ),
-    "Accept-Language": "uk-UA,uk;q=0.9,ru;q=0.8",
-}
-
+SPEC_LABELS = ["Экран", "Екран", "Память", "Пам'ять", "Камера", "CPU (GPU)", "Аккумулятор", "Акумулятор"]
 log = logging.getLogger("ek")
 
-# ---------------------------------------------------------------- HTTP ----
+CYR = "А-Яа-яІіЇїЄєҐґ'’ʼ"
+CYR_PAREN = re.compile(rf"\(([{CYR}.,\- ]{{2,40}})\)")
+KNOWN_CITIES = [
+    "Київ", "Харків", "Одеса", "Дніпро", "Львів", "Запоріжжя", "Кривий Ріг", "Миколаїв", "Вінниця",
+    "Полтава", "Чернігів", "Черкаси", "Житомир", "Суми", "Хмельницький", "Чернівці", "Рівне",
+    "Івано-Франківськ", "Тернопіль", "Луцьк", "Ужгород", "Кропивницький", "Біла Церква", "Кам'янське",
+    "Мукачево", "Бровари", "Ірпінь", "Буча", "Коломия", "Дрогобич", "Мелітополь", "Нікополь", "Умань",
+    "Кременчук", "Маріуполь", "Бердянськ", "Слов'янськ", "Краматорськ", "Дніпропетровськ", "Стрий",
+    "Калуш", "Бориспіль", "Вишневе", "Фастів", "Обухів", "Кам'янець-Подільський", "Ковель",
+    "Київська область",
+]
+DELIVERY_FORMS = {
+    "Києву": "Київ", "Київ": "Київ", "Харкову": "Харків", "Одесі": "Одеса", "Дніпру": "Дніпро",
+    "Львову": "Львів", "Запоріжжю": "Запоріжжя", "Миколаєву": "Миколаїв", "Вінниці": "Вінниця",
+    "Полтаві": "Полтава", "Чернігову": "Чернігів", "Черкасах": "Черкаси", "Житомиру": "Житомир",
+    "Сумах": "Суми", "Хмельницькому": "Хмельницький", "Чернівцях": "Чернівці", "Рівному": "Рівне",
+    "Івано-Франківську": "Івано-Франківськ", "Тернополі": "Тернопіль", "Луцьку": "Луцьк",
+    "Ужгороду": "Ужгород", "Кропивницькому": "Кропивницький", "Білій Церкві": "Біла Церква",
+    "Кривому Розі": "Кривий Ріг", "Броварах": "Бровари", "Ірпені": "Ірпінь", "Бучі": "Буча",
+    "Мукачеві": "Мукачево", "Коломиї": "Коломия", "Дрогобичі": "Дрогобич", "Кременчуці": "Кременчук",
+}
 
 
-def make_session() -> requests.Session:
-    s = requests.Session()
-    s.headers.update(HEADERS)
-    retry = Retry(
-        total=4,
-        backoff_factor=2,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=("GET",),
-    )
-    s.mount("https://", HTTPAdapter(max_retries=retry))
-    return s
+def _word_re(words):
+    alt = "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
+    return re.compile(rf"(?<![{CYR}])({alt})(?![{CYR}])")
 
 
-class BrowserFetcher:
-    """Завантаження сторінок справжнім Chromium (Playwright).
-    Вікно браузера видиме: якщо сайт покаже перевірку ("Я не робот" тощо),
-    пройдіть її вручну - скрипт зачекає до 2 хвилин."""
+CITY_RE = _word_re(KNOWN_CITIES)
+DELIV_RE = _word_re(DELIVERY_FORMS)
 
-    CHALLENGE_MARKERS = ("just a moment", "attention required", "перевірка", "проверка")
+JS_TEXT = """() => { const txt = el => { const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); const o = []; while (w.nextNode()) { const p = w.currentNode.parentElement; if (p && !['SCRIPT', 'STYLE'].includes(p.tagName)) o.push(w.currentNode.nodeValue); } return o.join(' '); }; return txt(document.body); }"""
 
-    def __init__(self, headless=False):
-        from playwright.sync_api import sync_playwright
-        self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=headless)
-        self._ctx = self._browser.new_context(locale="uk-UA", viewport={"width": 1366, "height": 850})
-        self._page = self._ctx.new_page()
+JS_LINKS = """() => [...document.querySelectorAll('a[href$=".htm"]')]
+  .filter(a => /^(Мобільний|Мобильный) телефон/.test(a.title || ''))
+  .map(a => a.getAttribute('href'))"""
 
-    OFFER_IMG = "img[src*='logo_shop']"
-    MORE_BTN = re.compile(r"(ще|еще|показати|показать)\s*(\d+)?\s*(пропозиц|предлож)", re.I)
+JS_OFFERS = """() => { const txt = el => { const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); const o = []; while (w.nextNode()) { const p = w.currentNode.parentElement; if (p && !['SCRIPT', 'STYLE'].includes(p.tagName)) o.push(w.currentNode.nodeValue); } return o.join(' '); };
+  return [...document.querySelectorAll("img[src*='logo_shop']")].map(img => {
+  let n = img, row = null;
+  for (let i = 0; i < 10; i++) {
+    n = n.parentElement;
+    if (!n || ['TABLE', 'TBODY', 'BODY', 'HTML'].includes(n.tagName)) break;
+    if (n.querySelectorAll("img[src*='logo_shop']").length > 1) break;
+    if (txt(n).length > 4000) break;
+    if (txt(n).includes('грн')) { row = n; if (n.tagName === 'TR') break; }
+  }
+  if (!row) return null;
+  const a = row.querySelector('a');
+  return {
+    shop: (img.alt || '').trim() || (a ? a.textContent.trim() : ''),
+    text: txt(row).replace(/\\s+/g, ' '),
+    attrs: [...row.querySelectorAll('[title]')].map(e => e.title).join(' '),
+  };
+}).filter(Boolean); }"""
 
-    def _count_offers(self):
-        return self._page.locator(self.OFFER_IMG).count()
-
-    def _expand_offers(self, expected):
-        """Натискає кнопку 'ще N пропозицій' / прокручує, поки не завантажаться всі."""
-        last, stale = self._count_offers(), 0
-        for _ in range(120):
-            if expected and last >= expected:
-                break
-            self._page.mouse.wheel(0, 30000)
-            btn = self._page.get_by_text(self.MORE_BTN).first
-            try:
-                if btn.count() and btn.is_visible():
-                    btn.scroll_into_view_if_needed(timeout=3000)
-                    btn.click(timeout=5000)
-            except Exception:
-                pass
-            self._page.wait_for_timeout(1200)
-            now = self._count_offers()
-            stale = stale + 1 if now <= last else 0
-            last = now
-            if stale >= 3:
-                break
-        return last
-
-    def fetch(self, url, expand=False, expected=None, scroll=False):
-        resp = self._page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        deadline = time.time() + 120
-        while time.time() < deadline:
-            title = (self._page.title() or "").lower()
-            if not any(m in title for m in self.CHALLENGE_MARKERS):
-                break
-            log.warning("Сторінка просить перевірку - пройдіть її у вікні браузера...")
-            time.sleep(3)
-        self._page.wait_for_timeout(1500)
-        status = resp.status if resp else 0
-        if status >= 400:
-            raise requests.HTTPError(f"{status} для {url}")
-        if expand:
-            self._expand_offers(expected)
-        if scroll:
-            for _ in range(15):
-                self._page.mouse.wheel(0, 1600)
-                self._page.wait_for_timeout(350)
-            self._page.wait_for_timeout(1200)
-        return self._page.content()
-
-    def close(self):
-        self._browser.close()
-        self._pw.stop()
+MORE_BTN = re.compile(r"(ще|еще|показати|показать)\s*\d*\s*(пропозиц|предлож)", re.I)
 
 
-def get_html(session, url, delay, debug_dir=None, tag=None, expand=False, expected=None, scroll=False):
-    time.sleep(delay)
-    if isinstance(session, BrowserFetcher):
-        text = session.fetch(url, expand=expand, expected=expected, scroll=scroll)
-    else:
-        r = session.get(url, timeout=30)
-        r.raise_for_status()
-        r.encoding = "utf-8"
-        text = r.text
-    if debug_dir and tag:
-        Path(debug_dir).mkdir(parents=True, exist_ok=True)
-        (Path(debug_dir) / f"{tag}.html").write_text(text, encoding="utf-8")
-    return text
+def clean(s):
+    return re.sub(r"\s+", " ", (s or "").replace("\xa0", " ")).strip()
 
 
-# ------------------------------------------------------------- парсинг ----
-
-
-def clean(text: str) -> str:
-    """Прибирає nbsp та зайві пробіли."""
-    return re.sub(r"\s+", " ", (text or "").replace("\xa0", " ")).strip()
-
-
-def parse_price(text: str):
-    """'42 299 грн.' -> 42299 ; '1 234,50 грн' -> 1234.5 ; нема числа -> None."""
-    m = re.search(r"(\d[\d\s\u00a0\u202f.,]*)\s*(?:грн|₴)", text or "")
-    if not m:
-        return None
-    raw = re.sub(r"[\s\u00a0\u202f]", "", m.group(1)).rstrip(".,")
-    if not raw:
-        return None
-    if "," in raw and "." not in raw:
-        raw = raw.replace(",", ".")
-    else:
-        raw = raw.replace(",", "")
-    try:
-        value = float(raw)
-    except ValueError:
-        return None
-    return int(value) if value.is_integer() else value
-
-
-def category_path(url_or_path: str) -> str:
-    """'https://ek.ua/ua/list/122/apple/' -> '/list/122/apple/'"""
+def category_path(url_or_path):
     path = re.sub(r"^https?://[^/]+", "", url_or_path.strip())
     path = re.sub(r"^/(ua|en)(?=/)", "", path)
     return path if path.endswith("/") else path + "/"
 
 
-def category_page_url(page: int, path: str = CATEGORY) -> str:
-    """page=1 -> /list/122/, page=2 -> /list/122/1/ ..."""
-    return BASE + (path if page == 1 else f"{path}{page - 1}/")
+def open_page(page, url, delay):
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    for _ in range(40): 
+        if not re.search(r"just a moment|attention required|перевірка|проверка", page.title(), re.I):
+            break
+        log.warning("Пройдіть перевірку у вікні браузера...")
+        page.wait_for_timeout(3000)
+    page.wait_for_timeout(int(delay * 1000))
 
 
-MODEL_HREF = re.compile(r"^(?:https://ek\.ua)?/(?:ua/)?([A-Z0-9][A-Z0-9\-]*)\.htm$")
+def scroll(page, steps=10):
+    for _ in range(steps):
+        page.mouse.wheel(0, 2000)
+        page.wait_for_timeout(300)
 
 
-def parse_model_links(html: str):
-    """Повертає впорядкований список slug-ів моделей зі сторінки категорії."""
-    soup = BeautifulSoup(html, "html.parser")
-    slugs, seen = [], set()
+def expand_offers(page, limit):
+    last = stale = 0
+    for _ in range(60):
+        n = page.locator("img[src*='logo_shop']").count()
+        if limit and n >= limit:
+            break
+        stale = stale + 1 if n <= last else 0
+        if stale >= 3:
+            break
+        last = n
+        page.mouse.wheel(0, 30000)
+        btn = page.get_by_text(MORE_BTN).first
+        try:
+            if btn.count() and btn.is_visible():
+                btn.click(timeout=3000)
+        except Exception:
+            pass
+        page.wait_for_timeout(1000)
 
-    def collect(anchors):
-        for a in anchors:
-            m = MODEL_HREF.match(a.get("href", ""))
-            if m and m.group(1) not in seen:
-                seen.add(m.group(1))
+
+def get_slugs(page, category, pages, delay):
+    slugs = []
+    for p in range(1, pages + 1):
+        url = f"{BASE}{category}" + ("" if p == 1 else f"{p - 1}/")
+        log.info("Категорія %s, сторінка %d: %s", category, p, url)
+        open_page(page, url, delay)
+        scroll(page)
+        for href in page.evaluate(JS_LINKS):
+            m = re.search(r"/([A-Za-z0-9][A-Za-z0-9\-]*)\.htm$", href)
+            if m and m.group(1) not in slugs:
                 slugs.append(m.group(1))
-
-    # Основні плитки моделей мають title "Мобильный телефон ..."
-    collect(
-        a
-        for a in soup.find_all("a", href=True)
-        if (a.get("title") or "").startswith(("Мобильный телефон", "Мобільний телефон"))
-    )
-    if not slugs:  # запасний варіант
-        collect(soup.find_all("a", href=True))
+        log.info("  усього моделей: %d", len(slugs))
     return slugs
 
 
-SPEC_LABELS = ["Экран", "Екран", "Память", "Пам'ять", "Камера", "CPU (GPU)",
-               "Аккумулятор", "Акумулятор"]
-
-
-def parse_model_page(html: str):
-    """Назва моделі + короткий опис (характеристики) зі сторінки моделі."""
-    soup = BeautifulSoup(html, "html.parser")
-    h1 = soup.find("h1")
-    name = clean(h1.get_text(" ")) if h1 else ""
-
-    text = clean(soup.get_text(" "))
+def parse_model(page):
+    name = clean(page.locator("h1").first.inner_text()) if page.locator("h1").count() else ""
+    text = clean(page.evaluate(JS_TEXT))
     label_re = "|".join(re.escape(x) for x in SPEC_LABELS)
-    marks = [(m.start(), m.end(), m.group(1))
-             for m in re.finditer(rf"({label_re}):", text)]
+    marks = [(m.start(), m.end(), m.group(1)) for m in re.finditer(rf"({label_re}):", text)]
     specs, used = [], set()
     for i, (_, end, label) in enumerate(marks):
         if label in used:
@@ -241,394 +147,144 @@ def parse_model_page(html: str):
             m = re.match(r"(\d[\d\s]*?\s*м[АA]\s*[·.]?\s*(?:год|ч))", value)
             value = re.sub(r"м[АA]\s*[·.]?\s*год", "мА·год", clean(m.group(1))) if m else value[:12]
         specs.append(f"{label}: {value[:200]}")
-        if len(specs) >= 5:
-            break
     return name, "; ".join(specs)
 
 
-CYR_PAREN = re.compile(r"\(([А-Яа-яІіЇїЄєҐґ'’ʼ.,\- ]{2,40})\)")
+PRICE_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:[\s\u00a0\u202f]\d{3})+|\d+)(?:[.,]\d{1,2})?\s*(?:грн|₴)")
 
 
-KNOWN_CITIES = [
-    "Київ", "Харків", "Одеса", "Дніпро", "Львів", "Запоріжжя", "Кривий Ріг", "Миколаїв", "Вінниця",
-    "Полтава", "Чернігів", "Черкаси", "Житомир", "Суми", "Хмельницький", "Чернівці", "Рівне",
-    "Івано-Франківськ", "Тернопіль", "Луцьк", "Ужгород", "Кропивницький", "Біла Церква", "Кам'янське",
-    "Мукачево", "Бровари", "Ірпінь", "Буча", "Коломия", "Дрогобич", "Мелітополь", "Нікополь", "Умань",
-    "Кременчук", "Маріуполь", "Бердянськ", "Слов'янськ", "Краматорськ", "Дніпропетровськ", "Стрий",
-    "Калуш", "Бориспіль", "Вишневе", "Фастів", "Обухів", "Кам'янець-Подільський", "Ковель",
-    "Київська область",
-    # російські написання
-    "Киев", "Харьков", "Одесса", "Днепр", "Днепропетровск", "Львов", "Запорожье", "Кривой Рог",
-    "Николаев", "Винница", "Чернигов", "Черкассы", "Сумы", "Хмельницкий", "Черновцы", "Ровно",
-    "Ивано-Франковск", "Тернополь", "Луцк", "Кировоград", "Белая Церковь",
-]
-_CITY_RE = re.compile(
-    r"(?<![А-Яа-яІіЇїЄєҐґ'’])(" +
-    "|".join(re.escape(c) for c in sorted(KNOWN_CITIES, key=len, reverse=True)) +
-    r")(?![А-Яа-яІіЇїЄєҐґ'’])")
-_debug_dumped = False
+def parse_price(text):
+    vals = [int(re.sub(r"\D", "", m.group(1))) for m in PRICE_RE.finditer(text or "")]
+    return max(vals) if vals else None  # найбільше: ціна товару, а не "Доставка 70 грн"
 
 
-# "Доставка: по Києву" -> Київ (форми місцевого/давального відмінка -> називний)
-DELIVERY_FORMS = {
-    "Києву": "Київ", "Київ": "Київ", "Харкову": "Харків", "Одесі": "Одеса", "Дніпру": "Дніпро",
-    "Львову": "Львів", "Запоріжжю": "Запоріжжя", "Миколаєву": "Миколаїв", "Вінниці": "Вінниця",
-    "Полтаві": "Полтава", "Чернігову": "Чернігів", "Черкасах": "Черкаси", "Житомиру": "Житомир",
-    "Сумах": "Суми", "Хмельницькому": "Хмельницький", "Чернівцях": "Чернівці", "Рівному": "Рівне",
-    "Івано-Франківську": "Івано-Франківськ", "Тернополі": "Тернопіль", "Луцьку": "Луцьк",
-    "Ужгороду": "Ужгород", "Кропивницькому": "Кропивницький", "Білій Церкві": "Біла Церква",
-    "Кривому Розі": "Кривий Ріг", "Броварах": "Бровари", "Ірпені": "Ірпінь", "Бучі": "Буча",
-    "Мукачеві": "Мукачево", "Коломиї": "Коломия", "Дрогобичі": "Дрогобич", "Кременчуці": "Кременчук",
-    "Києву": "Київ", "Киеву": "Киев", "Харькове": "Харьков", "Одессе": "Одесса", "Днепре": "Днепр",
-    "Львове": "Львов",
-}
-_DELIV_FORM_RE = re.compile(
-    r"(?<![А-Яа-яІіЇїЄєҐґ'’])(" +
-    "|".join(re.escape(f) for f in sorted(DELIVERY_FORMS, key=len, reverse=True)) +
-    r")(?![А-Яа-яІіЇїЄєҐґ'’])")
-
-
-def city_from_delivery(text):
-    m = re.search(r"(?:Доставка|Доставк[аи])\s*:?\s*(.{0,80})", text or "")
-    if not m:
-        return ""
-    f = _DELIV_FORM_RE.search(m.group(1))
-    return DELIVERY_FORMS[f.group(1)] if f else ""
-
-
-def find_city(head, after_shop, extra=""):
-    """1) '(Місто)' у дужках; 2) відоме місто за списком; '' якщо нічого."""
+def find_city(head, after_shop, extra, shop, fulltext, text):
     for chunk in (after_shop, head):
         found = CYR_PAREN.findall(chunk)
         if found:
             return clean(found[0] if chunk is after_shop else found[-1])
     for chunk in (after_shop, extra, head):
-        m = _CITY_RE.search(chunk or "")
+        m = CITY_RE.search(chunk or "")
         if m:
             return m.group(1)
-    return ""
+    if shop:  
+        m = re.search(re.escape(shop) + rf"\s*\(\s*([{CYR}.\- ]{{2,30}}?)\s*\)", fulltext)
+        if m:
+            return clean(m.group(1))
+    m = re.search(r"Доставк[аи]\s*:?\s*(.{0,80})", text)  
+    f = DELIV_RE.search(m.group(1)) if m else None
+    return DELIVERY_FORMS[f.group(1)] if f else ""
 
 
-def parse_offers(html: str):
-    """
-    Повертає список (shop, city, price) зі сторінки з пропозиціями.
-    Не залежить від CSS-класів: кожна пропозиція містить логотип магазину
-    (img з 'logo_shop' у src); піднімаємося до найближчого контейнера з ціною.
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    offers, seen_containers = [], set()
-    fulltext = clean(soup.get_text(" "))   # для пошуку "Магазин (Місто)" у короткому списку зверху
-
-    for img in soup.find_all("img", src=re.compile(r"logo_shop")):
-        shop = clean(img.get("alt", ""))
-        node, container = img, None
-        for _ in range(10):  # піднімаємося до найбільшого блоку з одним логотипом (весь рядок)
-            node = node.parent
-            if node is None or node.name in ("table", "tbody", "body", "html"):
-                break
-            if len(node.find_all("img", src=re.compile(r"logo_shop"))) > 1:
-                break
-            txt = node.get_text(" ")
-            if len(txt) > 4000:
-                break
-            if "грн" in txt:
-                container = node
-                if node.name == "tr":
-                    break
-        if container is None or id(container) in seen_containers:
-            continue
-        seen_containers.add(id(container))
-
-        text = clean(container.get_text(" "))
+def collect_offers(page):
+    fulltext = clean(page.evaluate(JS_TEXT))
+    offers, seen = [], set()
+    for raw in page.evaluate(JS_OFFERS):
+        shop, text = raw["shop"], raw["text"]
         parts = re.split(r"Поскаржит\w*|Пожаловат\w*", text, maxsplit=1)
         head, tail = (parts[0], parts[1]) if len(parts) == 2 else (text, "")
-        after_shop = head[head.rfind(shop) + len(shop):] if shop and shop in head else head
-        attrs = " ".join(clean(t.get("title", "")) for t in container.find_all(True) if t.get("title"))
-        city = find_city(head, after_shop, attrs)
-        if not city and shop:   # короткий список: "АЛЛО (Київ) →"
-            m = re.search(re.escape(shop) + r"\s*\(\s*([А-Яа-яІіЇїЄєҐґ'’.\- ]{2,30}?)\s*\)", fulltext)
-            city = clean(m.group(1)) if m else ""
-        if not city:           # "Доставка: по Києву"
-            city = city_from_delivery(text)
-        global _debug_dumped
-        if not city and not _debug_dumped:
-            _debug_dumped = True
-            Path("debug_offer_row.html").write_text(str(container), encoding="utf-8")
-            log.warning("Місто не знайдено. Розмітку рядка збережено у debug_offer_row.html")
+        after = head[head.rfind(shop) + len(shop):] if shop and shop in head else head
+        city = find_city(head, after, raw["attrs"], shop, fulltext, text)
         price = parse_price(tail) if tail else None
         if price is None:
             price = parse_price(text)
-
-        if not shop:  # запасний варіант: назва з посилання
-            a = container.find("a")
-            shop = clean(a.get_text(" ")) if a else ""
-        if shop and price is not None:
-            offers.append((shop, city, price))
+        key = (shop, city, price)
+        if shop and price is not None and key not in seen:
+            seen.add(key)
+            offers.append(key)
     return offers
 
 
-def offers_count_hint(html: str):
-    m = re.search(r"(?:Где купить|Де купити|Все цены|Усі ціни)\s*(\d+)", clean(BeautifulSoup(html, "html.parser").get_text(" ")))
-    return int(m.group(1)) if m else None
-
-
-# ---------------------------------------------------------------- логіка ---
-
-
-def is_closed(exc) -> bool:
-    return "has been closed" in str(exc) or type(exc).__name__ == "TargetClosedError"
-
-
-def scrape(pages, delay, max_models, debug_dir, browser=False, models=None,
-           categories=None, max_offers=20, out=None, first_only=False):
-    session = BrowserFetcher() if browser else make_session()
+def scrape(args):
     rows = []
-
-    slugs = []
-    for ci, cat in enumerate(categories or [CATEGORY] if not models else []):
-        for p in range(1, pages + 1):
-            url = category_page_url(p, cat)
-            log.info("Категорія %s, сторінка %d: %s", cat, p, url)
-            try:
-                html = get_html(session, url, delay, debug_dir, f"category_{ci}_{p}")
-            except Exception as e:
-                log.error("Не вдалося завантажити %s: %s", url, e)
-                if is_closed(e):
-                    return rows
-                continue
-            found = parse_model_links(html)
-            log.info("  знайдено моделей: %d", len(found))
-            for s in found:
-                if s not in slugs:
-                    slugs.append(s)
-
-    if models:
-        slugs = list(models)
-    if max_models:
-        slugs = slugs[:max_models]
-    log.info("Усього моделей до обробки: %d", len(slugs))
-
-    for i, slug in enumerate(slugs, 1):
-        model_url = f"{BASE}/{slug}.htm"
-        prices_url = f"{BASE}/prices/{slug.lower()}/"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=args.headless)
+        page = browser.new_context(locale="uk-UA", viewport={"width": 1366, "height": 850}).new_page()
         try:
-            model_html = get_html(session, model_url, delay, debug_dir, f"model_{slug}")
-            name, description = parse_model_page(model_html)
-            expected = offers_count_hint(model_html)
-
-            if first_only:
-                # лише перша пропозиція зі сторінки моделі - без списку пропозицій
-                offers = parse_offers(model_html)[:max_offers]
-                if not offers and browser:  # пропозиції могли підвантажитися із затримкою
-                    model_html = get_html(session, model_url, delay, debug_dir,
-                                          f"model_{slug}", scroll=True)
-                    offers = parse_offers(model_html)[:max_offers]
+            if args.model:
+                slugs = args.model
             else:
-                deep = max_offers == 0 or max_offers > 20
+                slugs = []
+                for cat in args.categories:
+                    slugs += [s for s in get_slugs(page, cat, args.pages, args.delay) if s not in slugs]
+            if args.max_models:
+                slugs = slugs[:args.max_models]
+            log.info("Усього моделей до обробки: %d", len(slugs))
+
+            deep = args.max_offers == 0 or args.max_offers > 5
+            for i, slug in enumerate(slugs, 1):
                 try:
-                    prices_html = get_html(session, prices_url, delay, debug_dir, f"prices_{slug}",
-                                           expand=deep, expected=(max_offers or expected) if deep else None)
-                    offers = parse_offers(prices_html)
-                except requests.RequestException:
-                    offers = []
-                if not offers:  # запасний варіант: пропозиції зі сторінки моделі
-                    offers = parse_offers(model_html)
-        except Exception as e:
-            log.error("[%d/%d] %s: %s", i, len(slugs), slug, e)
-            if is_closed(e):
-                log.error("Вікно браузера закрито - зберігаю вже зібране.")
-                break
-            continue
-
-        if first_only:
-            pass
-        elif max_offers:
-            offers = offers[:max_offers]
-        elif expected and len(offers) < expected:
-            log.warning("  %s: зібрано %d із %d пропозицій", slug, len(offers), expected)
-        log.info("[%d/%d] %s -> %s", i, len(slugs), name or slug,
-                 (f"{len(offers)} пропозицій" if offers else "пропозицій не знайдено"))
-        if first_only and not offers:
-            log.warning("  %s: немає пропозицій на сторінці моделі", slug)
-
-        for shop, city, price in offers:
-            rows.append({
-                "model": name or slug,
-                "description": description,
-                "city": city,
-                "shop": shop,
-                "price": price,
-            })
-        if out:
-            save_csv(rows, out)   # проміжне збереження після кожної моделі
-    if browser:
-        try:
-            session.close()
-        except Exception:
-            pass
-    return rows
-
-
-# ------------------------------------------- режим "лише сторінки категорії" ---
-
-LISTING_FIELDS = ["model", "description", "price_min", "price_max", "offers"]
-TILE_LABELS = ["Экран", "Екран", "Камера", "Видео", "Відео", "Память", "Пам'ять", "CPU (GPU)",
-               "ОЗУ", "ОЗП", "Аккумулятор", "Акумулятор", "Корпус"]
-TILE_CUT = re.compile(r"\s*(?:Отзывы|Відгуки|Видео \d|Відео \d|Фото \d|Обсуждение|Обговорення|Обзоры|Огляди|"
-                      r"Где купить|Де купити|Чехлы|Чохли|Стекла|Скла|Цвет|Колір|Цена|Ціна)\b.*$")
-TITLE_PREFIX = ("Мобильный телефон", "Мобільний телефон")
-
-
-def _is_model_anchor(a):
-    return (a.get("title") or "").startswith(TITLE_PREFIX) and MODEL_HREF.match(a.get("href", ""))
-
-
-def _num(text):
-    digits = re.sub(r"\D", "", text or "")
-    return int(digits) if digits else None
-
-
-def parse_listing(html: str):
-    """Плитки зі сторінки категорії -> [{model, description, price_min, price_max, offers}]"""
-    soup = BeautifulSoup(html, "html.parser")
-    label_re = "|".join(re.escape(x) for x in TILE_LABELS)
-    items, seen = [], set()
-    for a in soup.find_all("a", href=True):
-        if not _is_model_anchor(a):
-            continue
-        slug = MODEL_HREF.match(a["href"]).group(1)
-        if slug in seen:
-            continue
-        seen.add(slug)
-
-        tile, node = a, a
-        for _ in range(8):  # піднімаємося, доки в контейнері лише одна модель
-            node = node.parent
-            if node is None:
-                break
-            slugs = {MODEL_HREF.match(x["href"]).group(1)
-                     for x in node.find_all("a", href=True) if _is_model_anchor(x)}
-            if len(slugs) > 1:
-                break
-            tile = node
-        text = clean(tile.get_text(" "))
-
-        name = clean(a.get("title"))
-        for pref in TITLE_PREFIX:
-            name = name.replace(pref, "", 1).strip()
-
-        marks = [(m.start(), m.end(), m.group(1)) for m in re.finditer(rf"({label_re}):", text)]
-        specs, used = [], set()
-        for i, (_, end, label) in enumerate(marks):
-            if label in used:
-                continue
-            used.add(label)
-            nxt = marks[i + 1][0] if i + 1 < len(marks) else len(text)
-            value = TILE_CUT.sub("", text[end:nxt]).strip(" ,;")
-            if value:
-                specs.append(f"{label}: {value[:200]}")
-
-        pm = re.search(r"(?:Цена|Ціна)\s*(?:от|від)\s*([\d\s]+?)\s*(?:до\s*([\d\s]+?)\s*)?грн", text)
-        price_min = _num(pm.group(1)) if pm else None
-        price_max = (_num(pm.group(2)) if pm and pm.group(2) else price_min)
-        om = re.search(r"(\d+)\s*(?:предложени|пропозиц)", text) or re.search(r"(?:Где купить|Де купити)\s*(\d+)", text)
-        items.append({
-            "model": name or slug,
-            "description": "; ".join(specs),
-            "price_min": price_min,
-            "price_max": price_max,
-            "offers": int(om.group(1)) if om else None,
-        })
-    return items
-
-
-def scrape_listing(pages, delay, debug_dir, browser, categories, max_models, out):
-    session = BrowserFetcher() if browser else make_session()
-    rows, names = [], set()
-    try:
-        for ci, cat in enumerate(categories):
-            for p in range(1, pages + 1):
-                url = category_page_url(p, cat)
-                log.info("Категорія %s, сторінка %d: %s", cat, p, url)
-                try:
-                    html = get_html(session, url, delay, debug_dir, f"category_{ci}_{p}", scroll=True)
+                    open_page(page, f"{BASE}/{slug}.htm", args.delay)
+                    name, desc = parse_model(page)
+                    scroll(page, 5)
+                    model_offers = collect_offers(page)
+                    if not model_offers:  
+                        scroll(page, 8)
+                        model_offers = collect_offers(page)
+                    offers = model_offers
+                    if deep:
+                        try:
+                            open_page(page, f"{BASE}/prices/{slug.lower()}/", args.delay)
+                            expand_offers(page, args.max_offers)
+                            offers = collect_offers(page) or model_offers
+                        except Exception as e:
+                            if "closed" in str(e).lower():
+                                raise
+                            offers = model_offers
+                    if args.max_offers:
+                        offers = offers[:args.max_offers]
+                    log.info("[%d/%d] %s -> %s", i, len(slugs), name or slug,
+                             f"{len(offers)} пропозицій" if offers else "пропозицій не знайдено")
+                    rows += [dict(model=name or slug, description=desc, city=c, shop=s, price=p)
+                             for s, c, p in offers]
+                    save_csv(rows, args.out)
                 except Exception as e:
-                    log.error("Не вдалося завантажити %s: %s", url, e)
-                    if is_closed(e):
-                        return rows
-                    continue
-                items = parse_listing(html)
-                log.info("  знайдено моделей: %d", len(items))
-                for it in items:
-                    if it["model"] not in names:
-                        names.add(it["model"])
-                        rows.append(it)
-                save_csv(rows, out, LISTING_FIELDS)
-                if max_models and len(rows) >= max_models:
-                    return rows[:max_models]
-    finally:
-        if browser:
+                    log.error("[%d/%d] %s: %s", i, len(slugs), slug, e)
+                    if "closed" in str(e).lower():
+                        log.error("Вікно браузера закрито - зберігаю вже зібране.")
+                        break
+        except KeyboardInterrupt:
+            log.warning("Перервано користувачем - зберігаю вже зібране (%d записів).", len(rows))
+            save_csv(rows, args.out)
+        finally:
             try:
-                session.close()
+                browser.close()
             except Exception:
                 pass
     return rows
 
 
-def save_csv(rows, path, fields=None):
+def save_csv(rows, path):
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.DictWriter(f, fieldnames=fields or FIELDS, delimiter=",", quoting=csv.QUOTE_MINIMAL)
+        w = csv.DictWriter(f, fieldnames=FIELDS, quoting=csv.QUOTE_MINIMAL)
         w.writeheader()
         w.writerows(rows)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Збір пропозицій смартфонів з EK.ua у CSV")
+    ap = argparse.ArgumentParser(description="Смартфони з EK.ua -> CSV (Playwright)")
     ap.add_argument("--category-url", nargs="+", default=[CATEGORY], dest="categories",
-                    help="категорії/списки для обходу (за замовч. /list/122/ - усі смартфони). "
-                         "Напр.: https://ek.ua/ua/list/122/apple/ https://ek.ua/ua/list/122/samsung/")
-    ap.add_argument("--model", nargs="+", default=None,
-                    help="замість категорій - конкретні моделі (slug або посилання)")
-    ap.add_argument("--listing", action="store_true",
-                    help="лише сторінки категорії (без міста й магазину): діапазон цін від-до")
-    ap.add_argument("--offers", action="store_true",
-                    help="усі пропозиції кожної моделі (повільно) = --max-offers 0")
+                    help="категорії (за замовч. /list/122/). Напр.: https://ek.ua/ua/list/122/apple/")
+    ap.add_argument("--model", nargs="+", help="конкретні моделі (slug або посилання) замість категорій")
+    ap.add_argument("--offers", action="store_true", help="усі пропозиції = --max-offers 0")
     ap.add_argument("--max-offers", type=int, default=5,
-                    help="пропозицій на модель (за замовч. 5 - ті, що видно на сторінці моделі; "
-                         ">5 відкриває повний список; 0 = усі)")
-    ap.add_argument("--pages", type=int, default=5, help="кількість сторінок категорії (за замовч. 5)")
-    ap.add_argument("--delay", type=float, default=1.5, help="пауза між запитами, с")
-    ap.add_argument("--out", default="ek_smartphones.csv", help="вихідний CSV")
-    ap.add_argument("--max-models", type=int, default=0, help="обмежити кількість моделей (для тесту)")
-    ap.add_argument("--no-browser", dest="browser", action="store_false",
-                    help="вимкнути браузерний режим (за замовчуванням сторінки завантажує Chromium/Playwright)")
-    ap.set_defaults(browser=True)
-    ap.add_argument("--debug-dir", default=None, help="папка для збереження завантаженого HTML")
+                    help="пропозицій на модель (5 - зі сторінки моделі; >5 відкриває повний список; 0 = усі)")
+    ap.add_argument("--pages", type=int, default=5)
+    ap.add_argument("--max-models", type=int, default=0)
+    ap.add_argument("--delay", type=float, default=1.5)
+    ap.add_argument("--headless", action="store_true")
+    ap.add_argument("--out", default="ek_smartphones.csv")
     args = ap.parse_args()
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    models = None
+    if args.offers:
+        args.max_offers = 0
+    args.categories = [category_path(c) for c in args.categories]
     if args.model:
-        models = []
-        for m in args.model:
-            mm = re.search(r"([A-Za-z0-9][A-Za-z0-9\-]*)\.htm", m)
-            models.append((mm.group(1) if mm else m).strip("/").upper())
-    categories = [category_path(c) for c in args.categories]
-    if args.listing:
-        rows = scrape_listing(args.pages, args.delay, args.debug_dir, args.browser,
-                              categories, args.max_models, args.out)
-        if not rows:
-            log.error("Дані не зібрано. Запустіть з --debug-dir debug і перевірте HTML.")
-            sys.exit(1)
-        save_csv(rows, args.out, LISTING_FIELDS)
-        log.info("Збережено %d моделей у %s", len(rows), args.out)
-        return
-    max_offers = 0 if args.offers else args.max_offers
-    rows = scrape(args.pages, args.delay, args.max_models, args.debug_dir, args.browser, models,
-                  categories, max_offers, args.out,
-                  first_only=0 < max_offers <= 5)
+        args.model = [(re.search(r"([A-Za-z0-9][A-Za-z0-9\-]*)\.htm", m).group(1)
+                       if re.search(r"\.htm", m) else m).strip("/").upper() for m in args.model]
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    rows = scrape(args)
     if not rows:
-        log.error("Дані не зібрано. Запустіть з --debug-dir debug і перевірте HTML.")
+        log.error("Дані не зібрано.")
         sys.exit(1)
     save_csv(rows, args.out)
     log.info("Збережено %d записів у %s", len(rows), args.out)
